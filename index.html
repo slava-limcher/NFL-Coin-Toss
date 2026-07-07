@@ -47,6 +47,10 @@
   .logos img{width:30px;height:30px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
   .logos img:nth-child(2){margin-left:-6px}
   .empty{color:var(--dim);text-align:center;padding:30px 10px;font-size:14px}
+  .dsep{color:var(--dim);font-size:12px}
+  .btn.active{background:var(--accent);color:#1a1400;border-color:var(--accent)}
+  .datehdr{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin:14px 0 -2px;padding-left:4px}
+  .datehdr:first-child{margin-top:0}
   .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
 
@@ -115,7 +119,8 @@
     <!-- PICK GAME -->
     <section id="pickScreen" class="screen on">
       <div class="datebar">
-        <label>Games on</label>
+        <button class="btn" id="allBtn">All upcoming</button>
+        <span class="dsep">or a date</span>
         <input type="date" id="dateInput"/>
         <button class="btn ghost" id="reloadBtn" title="Reload">↻</button>
       </div>
@@ -187,21 +192,34 @@ async function loadGames(){
   const list=$('#gameList');
   list.innerHTML='<div class="empty"><span class="spinner"></span> Loading games…</div>';
   const val=$('#dateInput').value;
-  let url=API+'/scoreboard';
+  const allMode=!val;                              // empty date = show the whole upcoming slate
+  $('#allBtn').classList.toggle('active', allMode);
+  let url=API+'/scoreboard';                       // no ?dates = current week (all its games)
   if(val){ const d=new Date(val+'T12:00:00'); url+='?dates='+ymd(d); }
   try{
     const r=await fetch(url); const data=await r.json();
-    const events=data.events||[];
-    if(!events.length){ list.innerHTML='<div class="empty">No NFL games on this date.</div>'; return; }
+    let events=(data.events||[]).slice();
+    if(!events.length){ list.innerHTML='<div class="empty">No games found — try ↻ or pick a date.</div>'; return; }
+    events.sort((a,b)=> new Date(a.date) - new Date(b.date));   // chronological
     list.innerHTML='';
+    let lastDay=null;
     events.forEach(ev=>{
+      const when=new Date(ev.date);
+      const dayKey=when.toDateString();
+      if(dayKey!==lastDay){                         // date header keeps which date each game is on
+        lastDay=dayKey;
+        const h=document.createElement('div'); h.className='datehdr';
+        h.textContent=when.toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'});
+        list.appendChild(h);
+      }
       const comp=ev.competitions[0];
       const away=teamFrom(comp.competitors.find(c=>c.homeAway==='away')||comp.competitors[1]);
       const home=teamFrom(comp.competitors.find(c=>c.homeAway==='home')||comp.competitors[0]);
       const state=ev.status&&ev.status.type?ev.status.type.state:'pre';
-      const stTxt=ev.status&&ev.status.type?(ev.status.type.shortDetail||ev.status.type.description||''):'';
       const pc=state==='in'?'live':(state==='post'?'final':'pre');
       const pt=state==='in'?'Live':(state==='post'?'Final':'Upcoming');
+      const time=when.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+      const stTxt = state==='pre' ? time : (ev.status&&ev.status.type?(ev.status.type.shortDetail||ev.status.type.description||''):'');
       const el=document.createElement('div'); el.className='game';
       el.innerHTML=`
         <div class="logos">${away.logo?`<img src="${away.logo}" alt="">`:''}${home.logo?`<img src="${home.logo}" alt="">`:''}</div>
@@ -374,8 +392,9 @@ function fireConfetti(teamColor){
 // ---------- wiring ----------
 $('#reloadBtn').onclick=loadGames;
 $('#dateInput').onchange=loadGames;
+$('#allBtn').onclick=()=>{ $('#dateInput').value=''; loadGames(); };
 $('#backBtn').onclick=()=>{ cancelAnimationFrame(raf); clearTimeout(pollTimer); FLIPPED=true; anim.mode='idle'; show('pickScreen'); };
-$('#dateInput').value=isoDate(new Date());
+$('#dateInput').value='';        // default: show ALL upcoming games (current week's full slate)
 loadGames();
 </script>
 </body>
