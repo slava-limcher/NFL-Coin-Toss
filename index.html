@@ -49,6 +49,8 @@
   .empty{color:var(--dim);text-align:center;padding:30px 10px;font-size:14px}
   .dsep{color:var(--dim);font-size:12px}
   .btn.active{background:var(--accent);color:#1a1400;border-color:var(--accent)}
+  .btn.gold{background:var(--accent);color:#1a1400;border-color:var(--accent);font-weight:800}
+  .btn.gold:hover{filter:brightness(1.05)}
   .datehdr{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin:14px 0 -2px;padding-left:4px}
   .datehdr:first-child{margin-top:0}
   .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
@@ -149,6 +151,9 @@
         <span class="dsep">or a date</span>
         <input type="date" id="dateInput"/>
         <button class="btn ghost" id="reloadBtn" title="Reload">↻</button>
+      </div>
+      <div style="text-align:center;margin-bottom:16px">
+        <button class="btn gold" id="demoBtn">▶ Run demo</button>
       </div>
       <div id="gameList" class="games"><div class="empty"><span class="spinner"></span> Loading games…</div></div>
     </section>
@@ -274,6 +279,27 @@ function openGame(game){
   renderPickRow();          // display only (both teams shown)
   show('animScreen');
   bgPoll();                 // flips automatically the instant the real toss result arrives
+}
+
+// ---------- demo: sample matchup, random winner, full flip + win animation (no API) ----------
+function runDemo(){
+  const away={abbr:'KC', name:'Chiefs', full:'Kansas City Chiefs', color:'#e31837', logo:'https://a.espncdn.com/i/teamlogos/nfl/500/kc.png', homeAway:'away'};
+  const home={abbr:'PHI', name:'Eagles', full:'Philadelphia Eagles', color:'#004c54', logo:'https://a.espncdn.com/i/teamlogos/nfl/500/phi.png', homeAway:'home'};
+  CURRENT={id:'demo', away, home, state:'demo', name:'Chiefs @ Eagles'};
+  RESULT=null; PENDING=null; FLIPPED=false;
+  cancelAnimationFrame(raf); clearTimeout(pollTimer); anim.mode='idle';
+  $('#winFx').classList.remove('on');
+  $('#matchLine').textContent = CURRENT.name + ' • Demo';
+  buildCoin();
+  $('#coin').classList.add('idle'); $('#coin').style.transform='';
+  $('#prompt').textContent='Who will win the toss?';
+  $('#statusMain').textContent='Tossing the coin…';
+  $('#statusSub').textContent='Demo — random result';
+  $('#verdictBox').innerHTML='';
+  renderPickRow();
+  show('animScreen');
+  PENDING = Math.random()<0.5 ? 'away' : 'home';   // random winner for the demo
+  doFlip();
 }
 
 // Display only. Pass `win` to render the final won/lost highlight behind the win overlay.
@@ -403,6 +429,7 @@ function fireConfetti(teamColor){
 $('#reloadBtn').onclick=loadGames;
 $('#dateInput').onchange=loadGames;
 $('#allBtn').onclick=()=>{ $('#dateInput').value=''; loadGames(); };
+$('#demoBtn').onclick=runDemo;
 $('#backBtn').onclick=()=>{ cancelAnimationFrame(raf); clearTimeout(pollTimer); FLIPPED=true; anim.mode='idle'; $('#winFx').classList.remove('on'); show('pickScreen'); };
 $('#winAgain').onclick=()=>{ cancelAnimationFrame(raf); clearTimeout(pollTimer); FLIPPED=true; anim.mode='idle'; $('#winFx').classList.remove('on'); show('pickScreen'); };
 $('#dateInput').value='';        // default: show ALL upcoming games (current week's full slate)
