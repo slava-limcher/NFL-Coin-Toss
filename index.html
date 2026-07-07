@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Toss Call — NFL Coin Toss Guess</title>
+<!-- PeerJS for WebRTC phone-join. If blocked/offline, the TV still works solo. -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#131a26; --panel2:#0f1520; --line:#243043;
+    --ink:#eef3fb; --dim:#93a2ba; --accent:#ffd23f; --good:#37d67a; --bad:#ff5a6a;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(1200px 600px at 50% -10%, #1a2434 0%, transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    min-height:100%;
+    display:flex; flex-direction:column; align-items:center;
+    padding:22px 16px 48px;
+  }
+  h1{font-size:26px;letter-spacing:.5px;margin:2px 0 2px;font-weight:800}
+  h1 .em{color:var(--accent)}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:20px;text-align:center}
+  .wrap{width:100%;max-width:520px}
+  .screen{display:none;animation:fade .3s ease}
+  .screen.on{display:block}
+  .hidden{display:none !important}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* ---- date bar ---- */
+  .datebar{display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:14px;flex-wrap:wrap}
+  .datebar label{color:var(--dim);font-size:12px}
+  input[type=date],input[type=text]{
+    background:var(--panel);color:var(--ink);border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;font-size:14px;font-family:inherit
+  }
+  input[type=text]{padding:11px 12px}
+  .btn{
+    border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    border-radius:10px;padding:9px 14px;font-size:14px;font-weight:600;cursor:pointer
+  }
+  .btn:hover{border-color:#3a4a63}
+  .btn.ghost{background:transparent}
+  .btn.gold{background:var(--accent);color:#1a1400;border:none;font-weight:800}
+  .btn.gold:hover{filter:brightness(1.05)}
+  .btn:disabled{opacity:.4;cursor:default;pointer-events:none}
+
+  /* ---- game list ---- */
+  .games{display:flex;flex-direction:column;gap:10px}
+  .game{
+    display:flex;align-items:center;gap:12px;padding:12px 14px;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;cursor:pointer;
+    transition:transform .12s ease,border-color .12s ease
+  }
+  .game:hover{transform:translateY(-1px);border-color:#3a4a63}
+  .game .mt{flex:1;min-width:0}
+  .game .teams{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .game .meta{color:var(--dim);font-size:12px;margin-top:2px}
+  .pill{font-size:10px;font-weight:800;letter-spacing:.5px;padding:3px 7px;border-radius:999px;text-transform:uppercase}
+  .pill.live{background:rgba(55,214,122,.15);color:var(--good)}
+  .pill.final{background:rgba(147,162,186,.15);color:var(--dim)}
+  .pill.pre{background:rgba(255,210,63,.14);color:var(--accent)}
+  .logos{display:flex;align-items:center}
+  .logos img{width:30px;height:30px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
+  .logos img:nth-child(2){margin-left:-6px}
+  .empty{color:var(--dim);text-align:center;padding:30px 10px;font-size:14px}
+
+  /* ---- matchup + team cards ---- */
+  .matchline{color:var(--dim);font-size:13px;margin-bottom:4px;text-align:center}
+  .prompt{font-size:19px;font-weight:800;margin:6px 0 18px;text-align:center}
+  .teamgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
+  .teamcard{
+    border-radius:16px;padding:18px 12px;cursor:pointer;position:relative;
+    border:2px solid transparent;transition:transform .12s ease,box-shadow .12s ease;
+    display:flex;flex-direction:column;align-items:center;gap:8px;overflow:hidden
+  }
+  .teamcard:hover{transform:translateY(-2px)}
+  .teamcard.sel{border-color:#fff;box-shadow:0 0 0 4px rgba(255,255,255,.12),0 10px 30px rgba(0,0,0,.4)}
+  .teamcard.locked{cursor:default;opacity:.55}
+  .teamcard.locked.sel{opacity:1}
+  .teamcard .tlogo{width:64px;height:64px;object-fit:contain;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
+  .teamcard .tname{font-weight:800;font-size:15px;line-height:1.1}
+  .teamcard .tside{font-size:10px;letter-spacing:1px;opacity:.85;text-transform:uppercase;font-weight:700}
+  .teamcard .cnt{font-size:11px;font-weight:800;opacity:.9;margin-top:2px}
+  .teamcard .check{position:absolute;top:8px;right:10px;font-size:16px;opacity:0;transition:opacity .12s}
+  .teamcard.sel .check{opacity:1}
+
+  /* ---- flip / coin ---- */
+  .stage{perspective:1100px;height:250px;display:flex;align-items:center;justify-content:center;margin:8px 0}
+  .coin{width:190px;height:190px;position:relative;transform-style:preserve-3d;will-change:transform}
+  .coin .face{
+    position:absolute;inset:0;border-radius:50%;
+    backface-visibility:hidden;-webkit-backface-visibility:hidden;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    box-shadow:inset 0 0 0 8px rgba(255,255,255,.18), inset 0 0 40px rgba(0,0,0,.35), 0 20px 40px rgba(0,0,0,.5);
+    overflow:hidden
+  }
+  .coin .face::after{content:"";position:absolute;inset:0;border-radius:50%;
+    background:radial-gradient(120px 120px at 32% 26%, rgba(255,255,255,.35), transparent 60%)}
+  .coin .face .fl{width:74px;height:74px;object-fit:contain;filter:drop-shadow(0 3px 5px rgba(0,0,0,.5));z-index:1}
+  .coin .face .fa{font-weight:900;font-size:24px;letter-spacing:1px;z-index:1;text-shadow:0 2px 4px rgba(0,0,0,.4)}
+  .coin .back{transform:rotateX(180deg)}
+  .status{font-size:16px;font-weight:700;min-height:24px;margin-top:6px;text-align:center}
+  .statusdim{color:var(--dim);font-size:13px;min-height:18px;margin-top:2px;text-align:center}
+
+  .result{margin-top:16px;animation:pop .4s ease;text-align:center}
+  @keyframes pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
+  .verdict{font-size:28px;font-weight:900;letter-spacing:.5px}
+  .verdict.win{color:var(--good)}
+  .verdict.lose{color:var(--bad)}
+  .verdict.neutral{color:var(--ink)}
+  .rline{color:var(--dim);font-size:14px;margin-top:6px}
+  .rline b{color:var(--ink)}
+  .actions{display:flex;gap:10px;justify-content:center;margin-top:18px;flex-wrap:wrap}
+
+  /* ---- room / QR panel ---- */
+  .room{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 16px;
+    display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center}
+  .room img{width:120px;height:120px;border-radius:10px;background:#fff;padding:5px}
+  .room .rc{text-align:left;min-width:150px}
+  .room .rlabel{color:var(--dim);font-size:11px;letter-spacing:1.5px}
+  .room .code{font-size:34px;font-weight:900;letter-spacing:.16em;color:var(--accent)}
+  .room .rurl{font-size:11px;color:var(--dim);word-break:break-all;margin-top:2px}
+  .room .rstatus{font-size:12px;color:var(--dim);margin-top:6px;line-height:1.4}
+
+  /* ---- leaderboard ---- */
+  .lead{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .lead .p{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
+  .lead .p .rank{width:20px;opacity:.6;font-weight:800}
+  .lead .p .nm{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lead .p .pk{font-size:11px;opacity:.75;letter-spacing:.4px}
+  .lead .p .sc{font-weight:900;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .lead .p.correct{border-color:rgba(55,214,122,.5);background:rgba(55,214,122,.08)}
+  .lead .p.wrong{border-color:rgba(255,90,106,.4);background:rgba(255,90,106,.06)}
+  .sechead{font-size:12px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin:18px 0 2px;text-align:center}
+
+  .footnote{color:var(--dim);font-size:11px;text-align:center;margin-top:26px;max-width:520px;line-height:1.5}
+  a{color:var(--accent)}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
+</style>
+</head>
+<body>
+  <canvas id="confetti"></canvas>
+
+  <!-- ==================== TV / HOST ==================== -->
+  <div class="wrap" id="tvRoot">
+    <h1>Toss <span class="em">Call</span></h1>
+    <div class="sub" id="tvSub">Pick a game · phones scan to bet · TV flips the coin. Real NFL data.</div>
+
+    <!-- SCREEN 1: PICK GAME -->
+    <section id="pickScreen" class="screen on">
+      <div class="datebar">
+        <button class="btn gold" id="upcomingBtn" title="Show upcoming games">Upcoming</button>
+        <label>or date</label>
+        <input type="date" id="dateInput"/>
+        <button class="btn ghost" id="reloadBtn" title="Reload">↻</button>
+      </div>
+      <div id="listHead" class="sechead" style="display:none"></div>
+      <div id="gameList" class="games"><div class="empty"><span class="spinner"></span> Loading games…</div></div>
+    </section>
+
+    <!-- SCREEN 2: TOSS ROOM -->
+    <section id="tossScreen" class="screen">
+      <div class="matchline" id="matchLine2"></div>
+
+      <div class="room" id="roomPanel">
+        <img id="qrImg" alt="Join QR">
+        <div class="rc">
+          <div class="rlabel">SCAN TO BET · CODE</div>
+          <div class="code" id="roomCode">····</div>
+          <div class="rurl" id="joinUrl"></div>
+          <div class="rstatus" id="joinStatus"></div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="coin" id="coin">
+          <div class="face front" id="faceFront"></div>
+          <div class="face back" id="faceBack"></div>
+        </div>
+      </div>
+      <div class="status" id="statusMain"></div>
+      <div class="statusdim" id="statusSub"></div>
+      <div id="resultBox"></div>
+
+      <div class="actions">
+        <button class="btn gold" id="flipBtn">LOCK BETS &amp; FLIP</button>
+        <button class="btn ghost" id="againBtn" style="display:none">Flip another game</button>
+        <button class="btn ghost" id="backBtn1">← Change game</button>
+      </div>
+
+      <div class="prompt" id="tvPrompt">Who will win the toss?</div>
+      <div class="teamgrid" id="betCounts"></div>
+      <div class="sechead">Leaderboard</div>
+      <div class="lead" id="leaderboard"></div>
+    </section>
+
+    <div class="footnote">
+      Live NFL data from ESPN's public feed. The coin resolves to the team that receives the opening kickoff
+      (the visible outcome of the real coin toss). Phones join over the internet via WebRTC — host this page at a
+      web address (not a double-clicked file) for phone join to work.
+    </div>
+  </div>
+
+  <!-- ==================== PHONE ==================== -->
+  <div class="wrap hidden" id="phRoot">
+    <h1>Toss <span class="em">Call</span></h1>
+    <div class="sub" id="phSub">Call the toss on your phone</div>
+
+    <section id="phGate" class="screen on">
+      <div class="empty" id="phStatus" style="padding:14px 6px"></div>
+      <div class="datebar">
+        <input type="text" id="phName" placeholder="Your name" maxlength="18"/>
+        <button class="btn gold" id="phJoinBtn">Join</button>
+      </div>
+    </section>
+
+    <section id="phApp" class="screen">
+      <div class="matchline" id="phMatch"></div>
+      <div class="prompt" id="phPrompt">Who wins the toss?</div>
+      <div class="teamgrid" id="phTeamGrid"></div>
+      <div id="phResult"></div>
+      <div class="actions" style="justify-content:space-between">
+        <span id="phYou" style="color:var(--dim);font-size:13px"></span>
+        <span id="phScore" style="font-weight:900;color:var(--accent)"></span>
+      </div>
+      <div class="sechead">Leaderboard</div>
+      <div class="lead" id="phLead"></div>
+    </section>
+
+    <div class="footnote" id="phFoot"></div>
+  </div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const API = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
+const params = new URLSearchParams(location.search);
+const ROOM = (params.get("room")||"").toUpperCase().trim();
+
+// ---------- shared helpers ----------
+function ymd(d){ return d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0'); }
+function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function hexClean(c){ if(!c) return null; c=String(c).replace('#',''); return /^[0-9a-fA-F]{6}$/.test(c) ? '#'+c : null; }
+function textColorFor(hex){
+  if(!hex) return '#fff';
+  const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  const L=(0.299*r+0.587*g+0.114*b)/255;
+  return L>0.62 ? '#10151f' : '#ffffff';
+}
+function esc(s){ return (s||"").replace(/[<>&]/g,m=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[m])); }
+function teamFrom(competitor){
+  const t = competitor.team || {};
+  let color = hexClean(t.color);
+  const alt = hexClean(t.alternateColor);
+  if(color && (color==='#000000'||color==='#ffffff') && alt) color = alt;
+  return {
+    abbr: t.abbreviation || '??',
+    name: t.shortDisplayName || t.displayName || t.abbreviation || 'Team',
+    full: t.displayName || t.abbreviation || 'Team',
+    color: color || '#3a4a63',
+    logo: t.logo || (t.logos && t.logos[0] && t.logos[0].href) || '',
+    homeAway: competitor.homeAway
+  };
+}
+function teamCardHTML(t, side, extra){
+  const txt = textColorFor(t.color);
+  return `<div class="teamcard${extra||''}" data-side="${side}" style="background:${t.color};color:${txt}">
+    <div class="check">✓</div>
+    ${t.logo?`<img class="tlogo" src="${t.logo}" alt="">`:''}
+    <div class="tname">${esc(t.full)}</div>
+    <div class="tside">${side==='away'?'Away':'Home'}</div>
+    <div class="cnt" data-cnt="${side}"></div>
+  </div>`;
+}
+
+// ---------- networking ----------
+function hasPeer(){ return typeof Peer !== "undefined"; }
+function randCode(){ let a="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",s=""; for(let i=0;i<4;i++) s+=a.charAt(Math.floor(Math.random()*a.length)); return s; }
+function hostIdFor(code){ return "tosscall-2026-"+code; }
+function joinURL(code){ return location.origin+location.pathname+"?room="+code; }
+
+/* ============================================================
+   TV / HOST
+   ============================================================ */
+if(!ROOM){
+  let CURRENT=null, GUESS=null, RESULT=null, raf=null, PHASE='betting';
+  let PENDING=null, ARMED=false, FLIPPED=false, pollTimer=null;
+  const NET={hosting:false,peer:null,conns:[],code:null};
+
+  function show(id){ ['pickScreen','tossScreen'].forEach(s=>$('#'+s).classList.toggle('on', s===id)); }
+
+  // ---- SCREEN 1: load games ----
+  async function loadGames(){
+    const list = $('#gameList');
+    const head = $('#listHead');
+    list.innerHTML = '<div class="empty"><span class="spinner"></span> Loading games…</div>';
+    head.style.display='none';
+    const val = $('#dateInput').value;
+    // No date picked → "Upcoming": ESPN's plain scoreboard returns the current/next week's slate.
+    let url = API + '/scoreboard';
+    if(val){ const d = new Date(val+'T12:00:00'); url += '?dates=' + ymd(d); }
+    try{
+      const r = await fetch(url); const data = await r.json();
+      let events = (data.events || []).slice();
+      if(!events.length){
+        list.innerHTML = '<div class="empty">No NFL games '+(val?'on this date':'found')+'. Try another date.</div>';
+        return;
+      }
+      // upcoming/live first, then by kickoff time
+      const rank = ev => { const st=ev.status&&ev.status.type?ev.status.type.state:'pre'; return st==='in'?0:st==='pre'?1:2; };
+      events.sort((a,b)=>{ const d=rank(a)-rank(b); if(d) return d; return new Date(a.date)-new Date(b.date); });
+      // heading
+      if(!val && data.week && data.season){
+        head.textContent = 'NFL Week '+data.week.number+' · '+data.season.year+' — '+events.length+' upcoming games';
+      } else if(!val){
+        head.textContent = 'Upcoming NFL games — '+events.length;
+      } else {
+        head.textContent = events.length+' game'+(events.length>1?'s':'')+' on '+val;
+      }
+      head.style.display='';
+      list.innerHTML = '';
+      events.forEach(ev=>{
+        const comp = ev.competitions[0];
+        const away = teamFrom(comp.competitors.find(c=>c.homeAway==='away') || comp.competitors[1]);
+        const home = teamFrom(comp.competitors.find(c=>c.homeAway==='home') || comp.competitors[0]);
+        const state = ev.status && ev.status.type ? ev.status.type.state : 'pre';
+        const stTxt = ev.status && ev.status.type ? (ev.status.type.shortDetail||ev.status.type.description||'') : '';
+        const pillClass = state==='in'?'live':(state==='post'?'final':'pre');
+        const pillTxt = state==='in'?'Live':(state==='post'?'Final':'Upcoming');
+        const el = document.createElement('div'); el.className='game';
+        el.innerHTML = `
+          <div class="logos">
+            ${away.logo?`<img src="${away.logo}" alt="">`:''}
+            ${home.logo?`<img src="${home.logo}" alt="">`:''}
+          </div>
+          <div class="mt">
+            <div class="teams">${esc(away.name)} <span style="color:var(--dim)">@</span> ${esc(home.name)}</div>
+            <div class="meta">${esc(stTxt)}</div>
+          </div>
+          <span class="pill ${pillClass}">${pillTxt}</span>`;
+        el.onclick = ()=> openToss({ id: ev.id, away, home, state, name: `${away.name} @ ${home.name}` });
+        list.appendChild(el);
+      });
+    }catch(e){
+      list.innerHTML = '<div class="empty">Couldn\'t load games. Check your connection and try ↻.</div>';
+    }
+  }
+
+  // ---- SCREEN 2: toss room ----
+  function openToss(game){
+    CURRENT=game; GUESS=null; RESULT=null; PHASE='betting';
+    PENDING=null; ARMED=false; FLIPPED=false; clearTimeout(pollTimer);
+    cancelAnimationFrame(raf); anim.mode='idle';
+    NET.conns.forEach(c=>{ c._pick=null; c._correct=null; });
+    $('#matchLine2').textContent = game.name + (game.state==='post'?' • Final':game.state==='in'?' • Live':' • Upcoming');
+    buildCoin();
+    $('#coin').style.transform='rotateX(0deg)';
+    $('#tvPrompt').textContent = 'Who will win the toss?';
+    $('#statusMain').textContent = 'Place your bets — the coin flips when the real toss comes in.';
+    $('#statusSub').textContent = 'Phones scan to pick a team. The coin resolves to the actual toss.';
+    $('#resultBox').innerHTML='';
+    $('#flipBtn').style.display=''; $('#flipBtn').disabled=false; $('#flipBtn').textContent='LOCK BETS & FLIP';
+    $('#againBtn').style.display='none';
+    renderBetCards();
+    renderLeaderboard();
+    show('tossScreen');
+    startHosting();
+    broadcast();
+    bgPoll();               // start listening for the real toss result right away
+  }
+
+  function renderBetCards(){
+    const host = $('#betCounts'); if(!CURRENT){host.innerHTML='';return;}
+    const locked = PHASE!=='betting' ? ' locked' : '';
+    host.innerHTML = teamCardHTML(CURRENT.away,'away',locked) + teamCardHTML(CURRENT.home,'home',locked);
+    host.querySelectorAll('.teamcard').forEach(c=>{
+      if(PHASE==='betting'){
+        c.onclick = ()=>{ GUESS=c.dataset.side; markHostPick(); broadcast(); };
+      } else c.onclick=null;
+    });
+    markHostPick();
+    updateCounts();
+  }
+  function markHostPick(){
+    $('#betCounts').querySelectorAll('.teamcard').forEach(x=>x.classList.toggle('sel', x.dataset.side===GUESS));
+  }
+  function updateCounts(){
+    let a=0,h=0; NET.conns.forEach(c=>{ if(c._pick==='away')a++; else if(c._pick==='home')h++; });
+    if(GUESS==='away')a++; else if(GUESS==='home')h++;
+    const ca=$('#betCounts').querySelector('[data-cnt="away"]'); const ch=$('#betCounts').querySelector('[data-cnt="home"]');
+    if(ca) ca.textContent = a+(a===1?' bet':' bets');
+    if(ch) ch.textContent = h+(h===1?' bet':' bets');
+  }
+  function players(){
+    const arr = NET.conns.filter(c=>c._name).map(c=>({name:c._name,score:c._score||0,pick:c._pick||null,correct:c._correct}));
+    if(GUESS!==null || (PHASE==='revealed')) arr.push({name:'📺 TV (host)',score:HOST_SCORE,pick:GUESS,correct:HOST_CORRECT,host:true});
+    arr.sort((a,b)=>b.score-a.score);
+    return arr;
+  }
+  let HOST_SCORE=0, HOST_CORRECT=null;
+  function renderLeaderboard(){
+    const el=$('#leaderboard'); const ps=players();
+    el.innerHTML='';
+    if(!ps.length){ el.innerHTML='<div class="empty" style="padding:14px">Waiting for players to join…</div>'; return; }
+    ps.forEach((p,i)=>{
+      const cls = PHASE==='revealed' && p.pick ? (p.correct?' correct':' wrong') : '';
+      const pk = p.pick ? (p.pick==='away'?CURRENT.away.abbr:CURRENT.home.abbr) : '—';
+      const d=document.createElement('div'); d.className='p'+cls;
+      d.innerHTML=`<span class="rank">${i+1}</span><span class="nm">${esc(p.name)}</span><span class="pk">${pk}</span><span class="sc">${p.score}</span>`;
+      el.appendChild(d);
+    });
+  }
+
+  // ---- coin ----
+  function faceHTML(t){
+    const txt = textColorFor(t.color);
+    return `<div style="position:absolute;inset:0;border-radius:50%;background:${t.color}"></div>
+      ${t.logo?`<img class="fl" src="${t.logo}" alt="">`:''}
+      <div class="fa" style="color:${txt}">${t.abbr}</div>`;
+  }
+  function buildCoin(){
+    $('#faceFront').innerHTML = faceHTML(CURRENT.away); // front = away (0deg)
+    $('#faceBack').innerHTML  = faceHTML(CURRENT.home); // back  = home (180deg)
+  }
+  let anim = { angle:0, speed:660, mode:'idle', from:0, to:0, t0:0, dur:3000, _last:0 };
+  function tick(ts){
+    if(anim.mode==='spin'){
+      if(!anim._last) anim._last = ts;
+      const dt = Math.min(0.05,(ts - anim._last)/1000); anim._last = ts;
+      anim.angle += anim.speed*dt;
+      $('#coin').style.transform = 'rotateX('+anim.angle+'deg)';
+      raf = requestAnimationFrame(tick);
+    } else if(anim.mode==='land'){
+      const p = Math.min(1,(ts-anim.t0)/anim.dur);
+      const e = p<0.5 ? 4*p*p*p : 1 - Math.pow(-2*p+2,3)/2; // easeInOutCubic (accelerate from rest, decelerate to land)
+      anim.angle = anim.from + (anim.to-anim.from)*e;
+      $('#coin').style.transform = 'rotateX('+anim.angle+'deg)';
+      if(p>=1){ anim.mode='done'; onLanded(); } else raf = requestAnimationFrame(tick);
+    }
+  }
+  function startSpin(){ anim = { angle:0, speed:660, mode:'spin', _last:0 }; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  function landOn(side){
+    const base = anim.angle;
+    const targetFace = side==='home' ? 180 : 0;
+    const to = Math.ceil((base+360*4)/360)*360 + targetFace;
+    anim.from = base; anim.to = to; anim.dur = 3000;
+    anim.t0 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
+    anim.mode = 'land'; cancelAnimationFrame(raf); raf = requestAnimationFrame(tick);
+    setTimeout(()=>{ if(anim.mode==='land'){ anim.angle=anim.to; $('#coin').style.transform='rotateX('+anim.to+'deg)'; anim.mode='done'; onLanded(); } }, anim.dur + 500);
+  }
+
+  // Operator locks the bets and arms the flip. The coin does NOT spin yet —
+  // it flips the moment the real toss result arrives from the API.
+  function onFlip(){
+    if(PHASE!=='betting' || !CURRENT) return;
+    PHASE='flipping'; ARMED=true;
+    $('#flipBtn').disabled=true;
+    $('#resultBox').innerHTML='';
+    renderBetCards();      // re-render as locked
+    renderLeaderboard();
+    if(PENDING){ doFlip(); }   // result already in hand → flip now
+    else {
+      $('#statusMain').textContent = 'Bets locked — awaiting the toss…';
+      $('#statusSub').textContent = (CURRENT.state==='pre')
+        ? 'The coin flips the moment the game kicks off.'
+        : 'Reading the opening drive…';
+    }
+    broadcast();
+  }
+  // Silent background poll: caches the toss result. If armed, triggers the flip.
+  async function bgPoll(){
+    if(!CURRENT || PHASE==='revealed' || FLIPPED) return;
+    try{
+      const r = await fetch(API + '/summary?event=' + CURRENT.id + '&_=' + Date.now());
+      const data = await r.json();
+      const side = firstPossessionSide(data);
+      if(side){ PENDING = side; if(ARMED){ doFlip(); return; } }
+    }catch(e){}
+    if(PHASE!=='revealed' && !FLIPPED) pollTimer = setTimeout(bgPoll, 12000);
+  }
+  // Spin the coin from rest and land on the received result.
+  function doFlip(){
+    if(FLIPPED || !PENDING) return;
+    FLIPPED=true; clearTimeout(pollTimer);
+    RESULT = PENDING;
+    $('#statusMain').textContent = 'Flipping…';
+    $('#statusSub').textContent = '';
+    anim.angle = 0; $('#coin').style.transform = 'rotateX(0deg)';
+    landOn(RESULT);
+    broadcast();
+  }
+  function firstPossessionSide(summary){
+    const d = summary.drives; if(!d) return null;
+    const drives = [];
+    if(Array.isArray(d.previous)) drives.push(...d.previous);
+    if(d.current) drives.push(d.current);
+    if(!drives.length) return null;
+    let first=null, minId=Infinity;
+    drives.forEach(dr=>{ const idn=parseInt(dr.id,10); if(!isNaN(idn)&&idn<minId&&dr.team){ minId=idn; first=dr; } });
+    if(!first || !first.team) return null;
+    const abbr = first.team.abbreviation || first.team.abbrev;
+    if(abbr === CURRENT.away.abbr) return 'away';
+    if(abbr === CURRENT.home.abbr) return 'home';
+    return null;
+  }
+  function onLanded(){
+    PHASE='revealed'; RESULT=RESULT||'away';
+    const winTeam = RESULT==='away'?CURRENT.away:CURRENT.home;
+    // score everyone
+    NET.conns.forEach(c=>{ if(c._pick){ c._correct=(c._pick===RESULT); if(c._correct) c._score=(c._score||0)+1; } });
+    if(GUESS){ HOST_CORRECT=(GUESS===RESULT); if(HOST_CORRECT) HOST_SCORE++; }
+    const anyWin = NET.conns.some(c=>c._correct) || HOST_CORRECT;
+    $('#statusMain').textContent=''; $('#statusSub').textContent='';
+    $('#resultBox').innerHTML = `
+      <div class="result">
+        <div class="verdict ${anyWin?'win':'neutral'}">${esc(winTeam.full)} WIN THE TOSS</div>
+        <div class="rline"><b>${esc(winTeam.full)}</b> get the ball first.</div>
+      </div>`;
+    $('#tvPrompt').textContent = 'Final bets';
+    $('#flipBtn').style.display='none';
+    $('#againBtn').style.display='';
+    renderBetCards(); renderLeaderboard();
+    broadcast();
+    if(anyWin) fireConfetti();
+  }
+
+  // ---- hosting ----
+  function snapshot(){
+    const g=CURRENT||{};
+    return { t:"state", phase:PHASE, result:RESULT,
+      game: g.away ? {away:g.away,home:g.home,name:g.name,state:g.state} : null,
+      leaderboard: players().slice(0,12) };
+  }
+  function personalSnap(conn){ const s=snapshot(); s.you={pick:conn._pick||null,score:conn._score||0,correct:conn._correct}; return s; }
+  function broadcast(){
+    updateCounts();
+    if(!NET.hosting) return;
+    NET.conns.forEach(c=>{ if(c&&c.open){ try{ c.send(personalSnap(c)); }catch(e){} } });
+  }
+  function startHosting(){
+    if(NET.hosting){ updateRoomUI(); return; }
+    if(!hasPeer()){ $('#joinStatus').textContent="Phone join needs internet + a hosted web address."; return; }
+    $('#joinStatus').textContent="Starting room…";
+    tryHost(0);
+  }
+  function tryHost(attempt){
+    const code=randCode(); const peer=new Peer(hostIdFor(code));
+    peer.on("open",()=>{ NET.hosting=true; NET.peer=peer; NET.code=code; updateRoomUI(); });
+    peer.on("connection",conn=>{
+      conn.on("open",()=>{ NET.conns.push(conn); try{conn.send(personalSnap(conn));}catch(e){} });
+      conn.on("data",msg=>handlePhoneMsg(conn,msg));
+      conn.on("close",()=>{ NET.conns=NET.conns.filter(c=>c!==conn); renderLeaderboard(); updateCounts(); });
+      conn.on("error",()=>{});
+    });
+    peer.on("error",err=>{
+      if(err && err.type==="unavailable-id" && attempt<5){ try{peer.destroy();}catch(e){} tryHost(attempt+1); return; }
+      $('#joinStatus').textContent="Connection error ("+(err&&err.type?err.type:"unknown")+").";
+    });
+  }
+  function updateRoomUI(){
+    if(!NET.code) return;
+    $('#roomCode').textContent=NET.code;
+    const url=joinURL(NET.code); $('#joinUrl').textContent=url;
+    $('#qrImg').src="https://api.qrserver.com/v1/create-qr-code/?size=170x170&data="+encodeURIComponent(url);
+    $('#joinStatus').textContent = (location.protocol==="file:")
+      ? "Local file — phones can't reach it. Host at a web address for phone join."
+      : "Room is LIVE — players scan the code or open the link.";
+  }
+  function handlePhoneMsg(conn,msg){
+    if(!msg||!msg.t) return;
+    if(msg.t==="join"){ conn._name=(msg.name||"Guest").slice(0,18); conn._score=0; renderLeaderboard(); try{conn.send(personalSnap(conn));}catch(e){} }
+    else if(msg.t==="pick"){
+      if(PHASE!=='betting') return;
+      if(msg.side!=='away'&&msg.side!=='home') return;
+      conn._pick=msg.side; updateCounts(); renderLeaderboard();
+      try{conn.send(personalSnap(conn));}catch(e){}
+      broadcast();
+    }
+  }
+
+  // ---------- wiring (TV) ----------
+  $('#reloadBtn').onclick = loadGames;
+  $('#dateInput').onchange = loadGames;
+  $('#upcomingBtn').onclick = ()=>{ $('#dateInput').value=''; loadGames(); };
+  $('#flipBtn').onclick = onFlip;
+  $('#backBtn1').onclick = ()=>{ cancelAnimationFrame(raf); anim.mode='idle'; FLIPPED=true; clearTimeout(pollTimer); show('pickScreen'); };
+  $('#againBtn').onclick = ()=>{ cancelAnimationFrame(raf); anim.mode='idle'; FLIPPED=true; clearTimeout(pollTimer); show('pickScreen'); };
+  // default to the upcoming slate (no date pinned)
+  loadGames();
+
+  // shared confetti (defined once, used by TV)
+  window.fireConfetti = fireConfetti;
+  function fireConfetti(){
+    const cv = $('#confetti'); const ctx = cv.getContext('2d');
+    cv.width = innerWidth; cv.height = innerHeight;
+    const N=150, cols=['#ffd23f','#37d67a','#4aa8ff','#ff5a6a','#ffffff'], P=[];
+    for(let i=0;i<N;i++)P.push({x:innerWidth/2,y:innerHeight*0.4,vx:(Math.random()-.5)*14,vy:Math.random()*-14-4,g:.4+Math.random()*.3,c:cols[i%cols.length],s:5+Math.random()*6,r:Math.random()*6,vr:(Math.random()-.5)*.4});
+    let f=0;
+    (function loop(){
+      ctx.clearRect(0,0,cv.width,cv.height); f++;
+      P.forEach(p=>{p.vy+=p.g;p.x+=p.vx;p.y+=p.vy;p.r+=p.vr;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.r);ctx.fillStyle=p.c;ctx.fillRect(-p.s/2,-p.s/2,p.s,p.s*1.6);ctx.restore();});
+      if(f<170) requestAnimationFrame(loop); else ctx.clearRect(0,0,cv.width,cv.height);
+    })();
+  }
+}
+
+/* ============================================================
+   PHONE  (?room=CODE)  — bet only, no animation
+   ============================================================ */
+else {
+  $('#tvRoot').classList.add('hidden');
+  $('#phRoot').classList.remove('hidden');
+  document.title = "Join — Toss Call";
+  const PH = { code:ROOM, name:"", peer:null, conn:null, state:null };
+
+  $('#phFoot').textContent = "Room "+ROOM;
+  $('#phStatus').textContent = hasPeer() ? ("Enter your name to join room "+ROOM+".") : "Can't connect — no internet / PeerJS unavailable.";
+
+  function phShow(id){ ['phGate','phApp'].forEach(s=>$('#'+s).classList.toggle('on', s===id)); }
+
+  function join(){
+    const nm=($('#phName').value||"").trim();
+    if(!nm){ $('#phStatus').textContent="Please enter your name first."; return; }
+    if(!hasPeer()){ $('#phStatus').textContent="Can't connect (no internet)."; return; }
+    PH.name=nm.slice(0,18);
+    $('#phStatus').textContent="Connecting to room "+PH.code+"…";
+    const peer=new Peer(); PH.peer=peer;
+    peer.on("open",()=>{
+      const conn=peer.connect(hostIdFor(PH.code),{reliable:true}); PH.conn=conn;
+      conn.on("open",()=>{
+        conn.send({t:"join",name:PH.name});
+        $('#phYou').textContent="You: "+PH.name;
+        phShow('phApp');
+      });
+      conn.on("data",msg=>{ if(msg&&msg.t==="state"){ PH.state=msg; renderPhone(); } });
+      conn.on("close",()=>{ $('#phStatus').textContent="Disconnected from host."; phShow('phGate'); });
+      conn.on("error",()=>{ $('#phStatus').textContent="Connection problem — check the room code."; });
+    });
+    peer.on("error",err=>{
+      const ty=err&&err.type?err.type:"error";
+      $('#phStatus').textContent=(ty==="peer-unavailable")?("Room "+PH.code+" not found — ask the host to open the room."):("Connection error: "+ty);
+    });
+  }
+  function sendPick(side){
+    if(!PH.conn||!PH.conn.open) return;
+    const st=PH.state; if(!st||st.phase!=='betting') return;
+    PH.conn.send({t:"pick",side});
+  }
+  function renderPhone(){
+    const st=PH.state; if(!st) return;
+    const g=st.game, you=st.you||{};
+    if(g){
+      $('#phMatch').textContent = g.name + (g.state==='post'?' • Final':g.state==='in'?' • Live':' • Upcoming');
+      // build/refresh team cards
+      const grid=$('#phTeamGrid');
+      const locked = st.phase!=='betting' ? ' locked' : '';
+      if(grid.dataset.for!==g.name || grid.dataset.locked!==locked){
+        grid.dataset.for=g.name; grid.dataset.locked=locked;
+        grid.innerHTML = teamCardHTML(g.away,'away',locked) + teamCardHTML(g.home,'home',locked);
+        grid.querySelectorAll('.teamcard').forEach(c=>{
+          c.onclick = ()=>{ if(st.phase==='betting') sendPick(c.dataset.side); };
+        });
+      }
+      grid.querySelectorAll('.teamcard').forEach(x=>x.classList.toggle('sel', x.dataset.side===you.pick));
+    }
+    // prompt / result
+    const prompt=$('#phPrompt'), res=$('#phResult');
+    if(st.phase==='betting'){
+      $('#phSub').textContent="Call the toss!";
+      prompt.textContent = you.pick ? "Locked on "+(you.pick==='away'?g.away.abbr:g.home.abbr)+" — tap to change" : "Who wins the toss?";
+      res.innerHTML='';
+    } else if(st.phase==='flipping'){
+      $('#phSub').textContent="Coin in the air…";
+      prompt.textContent="Bets locked — watch the TV!";
+      res.innerHTML='';
+    } else if(st.phase==='revealed'){
+      const winTeam = st.result==='away'?g.away:g.home;
+      $('#phSub').textContent="Result";
+      prompt.textContent="";
+      if(you.pick){
+        res.innerHTML = `<div class="result"><div class="verdict ${you.correct?'win':'lose'}">${you.correct?'YOU CALLED IT! 🎉':'NOT THIS TIME'}</div>
+          <div class="rline"><b>${esc(winTeam.full)}</b> win the toss.</div></div>`;
+      } else {
+        res.innerHTML = `<div class="result"><div class="verdict neutral">${esc(winTeam.full)}</div><div class="rline">win the toss.</div></div>`;
+      }
+    }
+    $('#phScore').textContent=(you.score||0)+" pt"+((you.score||0)===1?"":"s");
+    // leaderboard
+    const el=$('#phLead'); el.innerHTML='';
+    (st.leaderboard||[]).forEach((p,i)=>{
+      const mine = p.name===("You: "+PH.name).slice(5) || p.name===PH.name;
+      const d=document.createElement('div'); d.className='p';
+      d.innerHTML=`<span class="rank">${i+1}</span><span class="nm">${esc(p.name)}${mine?' (you)':''}</span><span class="sc">${p.score}</span>`;
+      el.appendChild(d);
+    });
+  }
+
+  $('#phJoinBtn').onclick = join;
+  $('#phName').addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); join(); } });
+}
+</script>
+</body>
+</html>
