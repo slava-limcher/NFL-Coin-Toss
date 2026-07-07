@@ -107,11 +107,37 @@
   .rline{color:var(--dim);font-size:clamp(13px,1.5vw,18px);margin-top:6px;text-align:center}
   .actions{display:flex;gap:10px;justify-content:center;margin-top:24px;flex-wrap:wrap}
   .footnote{color:var(--dim);font-size:11px;text-align:center;margin-top:26px;max-width:640px;line-height:1.5}
-  #confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
+  #confetti{position:fixed;inset:0;pointer-events:none;z-index:60}
+
+  /* big win animation */
+  .winfx{position:fixed;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;justify-content:center;gap:clamp(10px,2vh,22px);text-align:center;overflow:hidden;padding:20px}
+  .winfx.on{display:flex;animation:winIn .45s ease}
+  @keyframes winIn{from{opacity:0}to{opacity:1}}
+  .winfx .rays{position:absolute;left:50%;top:46%;width:230vmax;height:230vmax;transform:translate(-50%,-50%);
+    background:repeating-conic-gradient(from 0deg, rgba(255,255,255,.10) 0deg 5deg, transparent 5deg 16deg);
+    animation:rayspin 18s linear infinite;pointer-events:none}
+  @keyframes rayspin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+  .winfx .wlogo{width:min(44vw,300px);height:min(44vw,300px);object-fit:contain;z-index:1;
+    filter:drop-shadow(0 12px 34px rgba(0,0,0,.6));animation:wpop .6s cubic-bezier(.2,1.35,.4,1) both}
+  @keyframes wpop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+  .winfx .wname{font-size:clamp(30px,7vw,84px);font-weight:900;line-height:1.02;z-index:1;color:#fff;text-shadow:0 4px 22px rgba(0,0,0,.55);animation:wup .5s .12s both ease}
+  .winfx .wsub{font-size:clamp(16px,2.6vw,30px);font-weight:800;letter-spacing:4px;text-transform:uppercase;z-index:1;color:#fff;opacity:.95;animation:wup .5s .2s both ease}
+  @keyframes wup{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+  .winfx .wbtn{z-index:1;margin-top:clamp(8px,2vh,20px);animation:wup .5s .3s both ease}
 </style>
 </head>
 <body>
   <canvas id="confetti"></canvas>
+
+  <!-- big win animation overlay -->
+  <div id="winFx" class="winfx">
+    <div class="rays"></div>
+    <img id="winLogo" class="wlogo" alt="">
+    <div id="winName" class="wname"></div>
+    <div id="winSub" class="wsub">Wins the toss</div>
+    <button class="btn wbtn" id="winAgain">← Flip another game</button>
+  </div>
+
   <div class="wrap">
     <h1>Coin <span class="em">Toss</span></h1>
     <div class="sub">The real NFL coin toss — animated live.</div>
@@ -180,7 +206,6 @@ function teamFrom(c){
 
 // ---------- state ----------
 let CURRENT=null, RESULT=null, PENDING=null, FLIPPED=false, raf=null, pollTimer=null;
-let PICK=null, ARMED=false;   // PICK = side the viewer thinks wins; ARMED once a pick is locked
 
 function show(id){
   ['pickScreen','animScreen'].forEach(s=>$('#'+s).classList.toggle('on', s===id));
@@ -234,58 +259,36 @@ async function loadGames(){
 
 // ---------- animation screen ----------
 function openGame(game){
-  CURRENT=game; RESULT=null; PENDING=null; FLIPPED=false; PICK=null; ARMED=false;
+  CURRENT=game; RESULT=null; PENDING=null; FLIPPED=false;
   cancelAnimationFrame(raf); clearTimeout(pollTimer); anim.mode='idle';
+  $('#winFx').classList.remove('on');
   $('#matchLine').textContent = game.name + (game.state==='post'?' • Final':game.state==='in'?' • Live':' • Upcoming');
   buildCoin();
   $('#coin').classList.add('idle'); $('#coin').style.transform='';
   $('#prompt').textContent='Who will win the toss?';
-  $('#statusMain').textContent = 'Tap the team you think wins the toss.';
-  $('#statusSub').textContent = '';
+  $('#statusMain').textContent = game.state==='pre' ? 'Awaiting the toss…' : 'Reading the toss…';
+  $('#statusSub').textContent = game.state==='pre'
+    ? 'The coin flips the moment the game kicks off.'
+    : 'The coin flips as soon as the result comes in.';
   $('#verdictBox').innerHTML='';
-  renderPickRow();          // selectable options
+  renderPickRow();          // display only (both teams shown)
   show('animScreen');
-  bgPoll();                 // cache the real result in the background; flip once a pick is locked
+  bgPoll();                 // flips automatically the instant the real toss result arrives
 }
 
-// mode: 'select' (tappable), or pass `win` to render the final won/lost highlight
+// Display only. Pass `win` to render the final won/lost highlight behind the win overlay.
 function renderPickRow(win){
-  const selectable = !win;
   const t=(team,side)=>{
     const txt=textColorFor(team.color);
-    let cls='';
-    if(win) cls = side===win ? ' won' : ' lost';
-    else { cls = ' selectable'; if(PICK===side) cls += ' sel'; }
+    const cls = win ? (side===win?' won':' lost') : '';
     return `<div class="team${cls}" data-side="${side}">
       <div class="tfill" style="background:${team.color}"></div>
-      <div class="check">✓</div>
       ${team.logo?`<img src="${team.logo}" alt="">`:`<div class="fa" style="font-size:34px;color:${txt}">${team.abbr}</div>`}
       <div class="tname">${esc(team.full)}</div>
       <div class="tside">${side==='away'?'Away':'Home'}</div>
     </div>`;
   };
   $('#pickRow').innerHTML = t(CURRENT.away,'away') + '<div class="vs">VS</div>' + t(CURRENT.home,'home');
-  if(selectable){
-    $('#pickRow').querySelectorAll('.team').forEach(el=>{
-      el.onclick = ()=>{ if(!ARMED) selectPick(el.dataset.side); };
-    });
-  }
-}
-
-// Viewer locks their call → this arms the flip. Coin flips as soon as the API result is known.
-function selectPick(side){
-  if(ARMED) return;
-  PICK=side; ARMED=true;
-  const picked = side==='away'?CURRENT.away:CURRENT.home;
-  $('#pickRow').querySelectorAll('.team').forEach(x=>{ x.classList.toggle('sel', x.dataset.side===side); x.onclick=null; });
-  $('#prompt').textContent='';
-  if(PENDING){ $('#statusMain').textContent='Flipping…'; $('#statusSub').textContent=''; doFlip(); }
-  else {
-    $('#statusMain').textContent = 'Locked in '+picked.abbr+' — awaiting the toss…';
-    $('#statusSub').textContent = CURRENT.state==='pre'
-      ? 'The coin flips the moment the game kicks off.'
-      : 'Reading the toss…';
-  }
 }
 
 // coin faces: front = away (0deg), back = home (180deg)
@@ -321,18 +324,17 @@ function landOn(side){
   setTimeout(()=>{ if(anim.mode==='land'){ anim.angle=anim.to; $('#coin').style.transform='rotateX('+anim.to+'deg)'; anim.mode='done'; onLanded(); } }, anim.dur+500);
 }
 
-// poll ESPN until the real toss result (receiving team) is known; caches it.
-// Flips only once the viewer has locked a pick (ARMED).
+// poll ESPN until the real toss result (receiving team) is known, then flip automatically.
 async function bgPoll(){
   if(!CURRENT || FLIPPED) return;
   try{
     const r=await fetch(API+'/summary?event='+CURRENT.id+'&_='+Date.now());
     const data=await r.json();
     const side=firstPossessionSide(data);
-    if(side){ PENDING=side; if(ARMED) doFlip(); return; }   // result cached; flip if a pick is locked
+    if(side){ PENDING=side; doFlip(); return; }
   }catch(e){}
   if(!FLIPPED){
-    if(ARMED) $('#statusSub').textContent = CURRENT.state==='pre'
+    $('#statusSub').textContent = CURRENT.state==='pre'
       ? 'The coin flips the moment the game kicks off.'
       : 'Waiting for the opening drive…';
     pollTimer=setTimeout(bgPoll, 12000);
@@ -364,15 +366,23 @@ function doFlip(){
 function onLanded(){
   const win=RESULT||'away';
   const winTeam=win==='away'?CURRENT.away:CURRENT.home;
-  const won = PICK===win;
-  $('#statusMain').textContent=''; $('#statusSub').textContent='';
-  $('#prompt').textContent='';
-  renderPickRow(win);   // highlight the actual winner / dim the loser
-  const callLine = PICK ? ` Your call: <b>${esc((PICK==='away'?CURRENT.away:CURRENT.home).name)}</b>.` : '';
-  $('#verdictBox').innerHTML=`
-    <div class="verdict ${won?'':'lose'}"><span class="wt">${won?'YOU CALLED IT! 🎉':'NOT THIS TIME'}</span></div>
-    <div class="rline"><b>${esc(winTeam.full)}</b> win the toss — they get the ball first.${callLine}</div>`;
-  if(won) fireConfetti(winTeam.color);
+  $('#statusMain').textContent=''; $('#statusSub').textContent=''; $('#prompt').textContent='';
+  renderPickRow(win);   // highlight the actual winner / dim the loser behind the overlay
+  $('#verdictBox').innerHTML='';
+  showWin(winTeam);
+}
+
+// ---------- big win animation ----------
+function hexA(hex,a){ const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return `rgba(${r},${g},${b},${a})`; }
+function showWin(team){
+  const fx=$('#winFx');
+  fx.style.background='radial-gradient(circle at 50% 42%, '+hexA(team.color,.60)+' 0%, rgba(9,13,21,.97) 66%)';
+  const logo=$('#winLogo');
+  if(team.logo){ logo.src=team.logo; logo.style.display=''; } else { logo.style.display='none'; }
+  $('#winName').textContent=team.full;
+  $('#winSub').textContent='Wins the toss';
+  fx.classList.add('on');
+  fireConfetti(team.color);
 }
 
 // ---------- confetti ----------
@@ -380,12 +390,12 @@ function fireConfetti(teamColor){
   const cv=$('#confetti'), ctx=cv.getContext('2d');
   cv.width=innerWidth; cv.height=innerHeight;
   const cols=[teamColor||'#ffd23f','#ffd23f','#37d67a','#ffffff','#4aa8ff'], P=[];
-  for(let i=0;i<170;i++)P.push({x:innerWidth/2,y:innerHeight*0.42,vx:(Math.random()-.5)*15,vy:Math.random()*-15-4,g:.4+Math.random()*.3,c:cols[i%cols.length],s:5+Math.random()*7,r:Math.random()*6,vr:(Math.random()-.5)*.4});
+  for(let i=0;i<300;i++)P.push({x:innerWidth*(0.2+Math.random()*0.6),y:innerHeight*0.35,vx:(Math.random()-.5)*17,vy:Math.random()*-17-3,g:.4+Math.random()*.3,c:cols[i%cols.length],s:6+Math.random()*8,r:Math.random()*6,vr:(Math.random()-.5)*.4});
   let f=0;
   (function loop(){
     ctx.clearRect(0,0,cv.width,cv.height); f++;
     P.forEach(p=>{p.vy+=p.g;p.x+=p.vx;p.y+=p.vy;p.r+=p.vr;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.r);ctx.fillStyle=p.c;ctx.fillRect(-p.s/2,-p.s/2,p.s,p.s*1.6);ctx.restore();});
-    if(f<180) requestAnimationFrame(loop); else ctx.clearRect(0,0,cv.width,cv.height);
+    if(f<320) requestAnimationFrame(loop); else ctx.clearRect(0,0,cv.width,cv.height);
   })();
 }
 
@@ -393,7 +403,8 @@ function fireConfetti(teamColor){
 $('#reloadBtn').onclick=loadGames;
 $('#dateInput').onchange=loadGames;
 $('#allBtn').onclick=()=>{ $('#dateInput').value=''; loadGames(); };
-$('#backBtn').onclick=()=>{ cancelAnimationFrame(raf); clearTimeout(pollTimer); FLIPPED=true; anim.mode='idle'; show('pickScreen'); };
+$('#backBtn').onclick=()=>{ cancelAnimationFrame(raf); clearTimeout(pollTimer); FLIPPED=true; anim.mode='idle'; $('#winFx').classList.remove('on'); show('pickScreen'); };
+$('#winAgain').onclick=()=>{ cancelAnimationFrame(raf); clearTimeout(pollTimer); FLIPPED=true; anim.mode='idle'; $('#winFx').classList.remove('on'); show('pickScreen'); };
 $('#dateInput').value='';        // default: show ALL upcoming games (current week's full slate)
 loadGames();
 </script>
