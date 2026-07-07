@@ -7,7 +7,7 @@
 <style>
   :root{
     --bg:#0b0f17; --panel:#131a26; --line:#243043;
-    --ink:#eef3fb; --dim:#93a2ba; --accent:#ffd23f; --good:#37d67a;
+    --ink:#eef3fb; --dim:#93a2ba; --accent:#ffd23f; --good:#37d67a; --bad:#ff5a6a;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%}
@@ -85,9 +85,20 @@
   .team.won{border-color:var(--good);box-shadow:0 0 0 5px rgba(55,214,122,.16),0 16px 40px rgba(0,0,0,.5);transform:translateY(-4px) scale(1.03)}
   .team.won .tfill{opacity:.32}
   .team.lost{opacity:.4}
+  .team.selectable{cursor:pointer}
+  .team.selectable:hover{transform:translateY(-5px);border-color:#fff}
+  .team.sel{border-color:#fff;box-shadow:0 0 0 5px rgba(255,255,255,.14),0 16px 40px rgba(0,0,0,.5)}
+  .team .check{position:absolute;top:10px;right:14px;font-size:22px;opacity:0;z-index:2;transition:opacity .15s;color:#fff;text-shadow:0 2px 5px rgba(0,0,0,.5)}
+  .team.sel .check{opacity:1}
+
+  /* full-screen presentation while the toss is playing */
+  body.playing{justify-content:center;padding-top:10px}
+  body.playing h1, body.playing .sub, body.playing .footnote{display:none}
+  #animScreen.on{justify-content:center;min-height:calc(100vh - 20px)}
 
   .verdict{font-size:clamp(26px,4.4vw,52px);font-weight:900;letter-spacing:.5px;margin-top:8px;text-align:center;animation:pop .45s ease}
   .verdict .wt{color:var(--good)}
+  .verdict.lose .wt{color:var(--bad)}
   @keyframes pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
   .rline{color:var(--dim);font-size:clamp(13px,1.5vw,18px);margin-top:6px;text-align:center}
   .actions{display:flex;gap:10px;justify-content:center;margin-top:24px;flex-wrap:wrap}
@@ -164,8 +175,12 @@ function teamFrom(c){
 
 // ---------- state ----------
 let CURRENT=null, RESULT=null, PENDING=null, FLIPPED=false, raf=null, pollTimer=null;
+let PICK=null, ARMED=false;   // PICK = side the viewer thinks wins; ARMED once a pick is locked
 
-function show(id){ ['pickScreen','animScreen'].forEach(s=>$('#'+s).classList.toggle('on', s===id)); }
+function show(id){
+  ['pickScreen','animScreen'].forEach(s=>$('#'+s).classList.toggle('on', s===id));
+  document.body.classList.toggle('playing', id==='animScreen');
+}
 
 // ---------- pick screen ----------
 async function loadGames(){
@@ -201,34 +216,58 @@ async function loadGames(){
 
 // ---------- animation screen ----------
 function openGame(game){
-  CURRENT=game; RESULT=null; PENDING=null; FLIPPED=false;
+  CURRENT=game; RESULT=null; PENDING=null; FLIPPED=false; PICK=null; ARMED=false;
   cancelAnimationFrame(raf); clearTimeout(pollTimer); anim.mode='idle';
   $('#matchLine').textContent = game.name + (game.state==='post'?' • Final':game.state==='in'?' • Live':' • Upcoming');
   buildCoin();
   $('#coin').classList.add('idle'); $('#coin').style.transform='';
   $('#prompt').textContent='Who will win the toss?';
-  $('#statusMain').textContent = game.state==='pre' ? 'Awaiting the toss…' : 'Reading the toss…';
-  $('#statusSub').textContent = game.state==='pre'
-    ? 'The coin flips the moment the game kicks off.'
-    : 'The coin flips as soon as the result comes in.';
+  $('#statusMain').textContent = 'Tap the team you think wins the toss.';
+  $('#statusSub').textContent = '';
   $('#verdictBox').innerHTML='';
-  renderPickRow();
+  renderPickRow();          // selectable options
   show('animScreen');
-  bgPoll();
+  bgPoll();                 // cache the real result in the background; flip once a pick is locked
 }
 
+// mode: 'select' (tappable), or pass `win` to render the final won/lost highlight
 function renderPickRow(win){
+  const selectable = !win;
   const t=(team,side)=>{
     const txt=textColorFor(team.color);
-    const cls = win ? (side===win?' won':' lost') : '';
+    let cls='';
+    if(win) cls = side===win ? ' won' : ' lost';
+    else { cls = ' selectable'; if(PICK===side) cls += ' sel'; }
     return `<div class="team${cls}" data-side="${side}">
       <div class="tfill" style="background:${team.color}"></div>
+      <div class="check">✓</div>
       ${team.logo?`<img src="${team.logo}" alt="">`:`<div class="fa" style="font-size:34px;color:${txt}">${team.abbr}</div>`}
       <div class="tname">${esc(team.full)}</div>
       <div class="tside">${side==='away'?'Away':'Home'}</div>
     </div>`;
   };
   $('#pickRow').innerHTML = t(CURRENT.away,'away') + '<div class="vs">VS</div>' + t(CURRENT.home,'home');
+  if(selectable){
+    $('#pickRow').querySelectorAll('.team').forEach(el=>{
+      el.onclick = ()=>{ if(!ARMED) selectPick(el.dataset.side); };
+    });
+  }
+}
+
+// Viewer locks their call → this arms the flip. Coin flips as soon as the API result is known.
+function selectPick(side){
+  if(ARMED) return;
+  PICK=side; ARMED=true;
+  const picked = side==='away'?CURRENT.away:CURRENT.home;
+  $('#pickRow').querySelectorAll('.team').forEach(x=>{ x.classList.toggle('sel', x.dataset.side===side); x.onclick=null; });
+  $('#prompt').textContent='';
+  if(PENDING){ $('#statusMain').textContent='Flipping…'; $('#statusSub').textContent=''; doFlip(); }
+  else {
+    $('#statusMain').textContent = 'Locked in '+picked.abbr+' — awaiting the toss…';
+    $('#statusSub').textContent = CURRENT.state==='pre'
+      ? 'The coin flips the moment the game kicks off.'
+      : 'Reading the toss…';
+  }
 }
 
 // coin faces: front = away (0deg), back = home (180deg)
@@ -264,17 +303,18 @@ function landOn(side){
   setTimeout(()=>{ if(anim.mode==='land'){ anim.angle=anim.to; $('#coin').style.transform='rotateX('+anim.to+'deg)'; anim.mode='done'; onLanded(); } }, anim.dur+500);
 }
 
-// poll ESPN until the real toss result (receiving team) is known, then flip
+// poll ESPN until the real toss result (receiving team) is known; caches it.
+// Flips only once the viewer has locked a pick (ARMED).
 async function bgPoll(){
   if(!CURRENT || FLIPPED) return;
   try{
     const r=await fetch(API+'/summary?event='+CURRENT.id+'&_='+Date.now());
     const data=await r.json();
     const side=firstPossessionSide(data);
-    if(side){ PENDING=side; doFlip(); return; }
+    if(side){ PENDING=side; if(ARMED) doFlip(); return; }   // result cached; flip if a pick is locked
   }catch(e){}
   if(!FLIPPED){
-    $('#statusSub').textContent = CURRENT.state==='pre'
+    if(ARMED) $('#statusSub').textContent = CURRENT.state==='pre'
       ? 'The coin flips the moment the game kicks off.'
       : 'Waiting for the opening drive…';
     pollTimer=setTimeout(bgPoll, 12000);
@@ -306,13 +346,15 @@ function doFlip(){
 function onLanded(){
   const win=RESULT||'away';
   const winTeam=win==='away'?CURRENT.away:CURRENT.home;
+  const won = PICK===win;
   $('#statusMain').textContent=''; $('#statusSub').textContent='';
   $('#prompt').textContent='';
-  renderPickRow(win);
+  renderPickRow(win);   // highlight the actual winner / dim the loser
+  const callLine = PICK ? ` Your call: <b>${esc((PICK==='away'?CURRENT.away:CURRENT.home).name)}</b>.` : '';
   $('#verdictBox').innerHTML=`
-    <div class="verdict"><span class="wt">${esc(winTeam.full)}</span> win the toss</div>
-    <div class="rline">${esc(winTeam.full)} get the ball first.</div>`;
-  fireConfetti(winTeam.color);
+    <div class="verdict ${won?'':'lose'}"><span class="wt">${won?'YOU CALLED IT! 🎉':'NOT THIS TIME'}</span></div>
+    <div class="rline"><b>${esc(winTeam.full)}</b> win the toss — they get the ball first.${callLine}</div>`;
+  if(won) fireConfetti(winTeam.color);
 }
 
 // ---------- confetti ----------
